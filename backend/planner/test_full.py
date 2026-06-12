@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 from src import Database
 
 db = Database()
-sqs = boto3.client('sqs')
-sts = boto3.client('sts')
+_region = os.environ.get('DEFAULT_AWS_REGION', 'us-east-1')
+sqs = boto3.client('sqs', region_name=_region)
+sts = boto3.client('sts', region_name=_region)
 
 # Get configuration
 QUEUE_NAME = os.getenv('SQS_QUEUE_NAME', 'alex-analysis-jobs')

@@ -11,6 +11,8 @@ import signal
 import time
 from pathlib import Path
 
+NPM = "npm.cmd" if sys.platform == "win32" else "npm"
+
 # Track subprocesses for cleanup
 processes = []
 
@@ -43,7 +45,7 @@ def check_requirements():
 
     # Check npm
     try:
-        result = subprocess.run(["npm", "--version"], capture_output=True, text=True)
+        result = subprocess.run([NPM, "--version"], capture_output=True, text=True)
         npm_version = result.stdout.strip()
         checks.append(f"✅ npm: {npm_version}")
     except FileNotFoundError:
@@ -138,11 +140,11 @@ def start_frontend():
     # Check if dependencies are installed
     if not (frontend_dir / "node_modules").exists():
         print("  Installing frontend dependencies...")
-        subprocess.run(["npm", "install"], cwd=frontend_dir, check=True)
+        subprocess.run([NPM, "install"], cwd=frontend_dir, check=True)
 
     # Start the frontend
     proc = subprocess.Popen(
-        ["npm", "run", "dev"],
+        [NPM, "run", "dev"],
         cwd=frontend_dir,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,  # Combine stderr with stdout
@@ -154,35 +156,20 @@ def start_frontend():
     # Wait for frontend to start
     print("  Waiting for frontend to start...")
     import httpx
-    import select
 
-    started = False
     for i in range(30):  # 30 second timeout
-        # Check for any output from the process using non-blocking read
-        if proc.stdout:
-            ready, _, _ = select.select([proc.stdout], [], [], 0)
-            if ready:
-                line = proc.stdout.readline()
-                if line:
-                    print(f"    Frontend: {line.strip()}")
-                    # NextJS dev server prints "Ready" when it's ready
-                    if "ready" in line.lower() or "compiled" in line.lower() or "started server" in line.lower():
-                        started = True
-
-        # Also try to connect
-        if started or i > 5:  # Start checking after 5 seconds or when we see "ready"
-            try:
-                response = httpx.get("http://localhost:3000", timeout=1)
-                print("  ✅ Frontend running at http://localhost:3000")
-                return proc
-            except httpx.ConnectError:
-                pass  # Server not ready yet
-            except:
-                # Any other response means server is up
-                print("  ✅ Frontend running at http://localhost:3000")
-                return proc
-
         time.sleep(1)
+        if i < 5:
+            continue  # Give it a moment before polling
+        try:
+            httpx.get("http://localhost:3000", timeout=1)
+            print("  ✅ Frontend running at http://localhost:3000")
+            return proc
+        except httpx.ConnectError:
+            pass
+        except Exception:
+            print("  ✅ Frontend running at http://localhost:3000")
+            return proc
 
     print("  ❌ Frontend failed to start")
     cleanup()

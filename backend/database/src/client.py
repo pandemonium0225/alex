@@ -9,7 +9,8 @@ import os
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import date, datetime
 from decimal import Decimal
-from botocore.exceptions import ClientError
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 import logging
 
 # Try to load .env file if it exists
@@ -52,8 +53,16 @@ class DataAPIClient:
                 "Set AURORA_CLUSTER_ARN and AURORA_SECRET_ARN environment variables."
             )
 
-        self.region = os.environ.get("DEFAULT_AWS_REGION", "us-east-1")
-        self.client = boto3.client("rds-data", region_name=self.region)
+        self.region = region or os.environ.get("DEFAULT_AWS_REGION", "us-east-1")
+        connect_timeout = int(os.environ.get("AURORA_CONNECT_TIMEOUT", "5"))
+        read_timeout = int(os.environ.get("AURORA_READ_TIMEOUT", "15"))
+        max_attempts = int(os.environ.get("AURORA_MAX_ATTEMPTS", "2"))
+        config = Config(
+            connect_timeout=connect_timeout,
+            read_timeout=read_timeout,
+            retries={"max_attempts": max_attempts, "mode": "standard"},
+        )
+        self.client = boto3.client("rds-data", region_name=self.region, config=config)
 
     def execute(self, sql: str, parameters: List[Dict] = None) -> Dict:
         """
@@ -81,7 +90,7 @@ class DataAPIClient:
             response = self.client.execute_statement(**kwargs)
             return response
 
-        except ClientError as e:
+        except (BotoCoreError, ClientError) as e:
             logger.error(f"Database error: {e}")
             raise
 

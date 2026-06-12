@@ -16,13 +16,14 @@ load_dotenv(env_path, override=True)
 # Get configuration
 VECTOR_BUCKET = os.getenv('VECTOR_BUCKET')
 INDEX_NAME = 'financial-research'
+AWS_REGION = os.getenv('DEFAULT_AWS_REGION', 'us-east-1')
 
 if not VECTOR_BUCKET:
     print("Error: VECTOR_BUCKET not found in .env")
     exit(1)
 
 # Initialize S3 Vectors client
-s3_vectors = boto3.client('s3vectors')
+s3_vectors = boto3.client('s3vectors', region_name=AWS_REGION)
 
 def delete_all_vectors():
     """Delete all vectors from the index."""
@@ -38,7 +39,7 @@ def delete_all_vectors():
         print("Searching for vectors to delete...")
         
         # Get a real embedding for a generic search term
-        sagemaker_runtime = boto3.client('sagemaker-runtime')
+        sagemaker_runtime = boto3.client('sagemaker-runtime', region_name=AWS_REGION)
         SAGEMAKER_ENDPOINT = os.getenv('SAGEMAKER_ENDPOINT', 'alex-embedding-endpoint')
         
         response = sagemaker_runtime.invoke_endpoint(

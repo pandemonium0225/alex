@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import subprocess
 import argparse
+import zipfile
 from pathlib import Path
 
 
@@ -91,7 +92,10 @@ def package_lambda():
 
         # Create new zip
         print(f"Creating zip file: {zip_path}")
-        run_command(["zip", "-r", str(zip_path), "."], cwd=str(package_dir))
+        with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in package_dir.rglob("*"):
+                if file.is_file():
+                    zf.write(file, file.relative_to(package_dir))
 
         # Get file size
         size_mb = zip_path.stat().st_size / (1024 * 1024)

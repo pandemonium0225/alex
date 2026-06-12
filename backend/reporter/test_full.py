@@ -18,7 +18,7 @@ def test_reporter_lambda():
     """Test the Reporter agent via Lambda invocation"""
     
     db = Database()
-    lambda_client = boto3.client('lambda')
+    lambda_client = boto3.client('lambda', region_name=os.environ.get('DEFAULT_AWS_REGION', 'us-east-1'))
     
     # Create test job
     test_user_id = "test_user_001"
@@ -50,7 +50,9 @@ def test_reporter_lambda():
         
         if job and job.get('report_payload'):
             print("\n✅ Report generated successfully!")
-            print(f"Report preview: {job['report_payload'][:500]}...")
+            payload = job['report_payload']
+            preview = payload if isinstance(payload, str) else json.dumps(payload)
+            print(f"Report preview: {preview[:500]}...")
         else:
             print("\n❌ No report found in database")
             

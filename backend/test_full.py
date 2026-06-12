@@ -71,7 +71,7 @@ def main():
     print("=" * 70)
     
     db = Database()
-    sqs = boto3.client('sqs')
+    sqs = boto3.client('sqs', region_name=os.environ.get('DEFAULT_AWS_REGION', 'us-east-1'))
     
     # Setup test data
     test_user_id = setup_test_data(db)

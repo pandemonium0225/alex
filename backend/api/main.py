@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 import boto3
+from botocore.exceptions import ClientError
 from mangum import Mangum
 from dotenv import load_dotenv
 from fastapi_clerk_auth import ClerkConfig, ClerkHTTPBearer, HTTPAuthorizationCredentials
@@ -100,7 +101,7 @@ SQS_QUEUE_URL = os.getenv('SQS_QUEUE_URL', '')
 
 # Clerk authentication setup (exactly like saas reference)
 clerk_config = ClerkConfig(jwks_url=os.getenv("CLERK_JWKS_URL"))
-clerk_guard = ClerkHTTPBearer(clerk_config)
+clerk_guard = ClerkHTTPBearer(clerk_config, debug_mode=True)
 
 async def get_current_user_id(creds: HTTPAuthorizationCredentials = Depends(clerk_guard)) -> str:
     """Extract user ID from validated Clerk token"""
@@ -140,6 +141,19 @@ class AnalyzeRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     job_id: str
     message: str
+
+
+def database_http_exception(error: Exception) -> Optional[HTTPException]:
+    """Convert common Aurora/Data API states into useful HTTP errors."""
+    if isinstance(error, ClientError):
+        error_code = error.response.get("Error", {}).get("Code")
+        if error_code == "DatabaseResumingException":
+            return HTTPException(
+                status_code=503,
+                detail="Aurora is waking up after being auto-paused. Wait a minute, then refresh.",
+            )
+
+    return None
 
 # API Routes
 
@@ -187,6 +201,9 @@ async def get_or_create_user(
 
     except Exception as e:
         logger.error(f"Error in get_or_create_user: {e}")
+        http_error = database_http_exception(e)
+        if http_error:
+            raise http_error
         raise HTTPException(status_code=500, detail="Failed to load user profile")
 
 @app.put("/api/user")

@@ -7,6 +7,39 @@ import { Skeleton, SkeletonCard } from "../components/Skeleton";
 import { showToast } from "../components/Toast";
 import Head from "next/head";
 
+const API_TIMEOUT_MS = 15000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs = API_TIMEOUT_MS
+) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+function getLoadErrorMessage(err: unknown) {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return "Backend request timed out. Check that Aurora is running and AWS Data API is reachable.";
+  }
+
+  return err instanceof Error ? err.message : "Failed to load data";
+}
+
+async function getResponseError(response: Response, fallback: string) {
+  const body = await response.json().catch(() => null);
+  return body?.detail || `${fallback}: ${response.status}`;
+}
+
 interface UserData {
   clerk_user_id: string;
   display_name: string;
@@ -119,14 +152,14 @@ export default function Dashboard() {
         }
 
         // Get/create user
-        const userResponse = await fetch(`${API_URL}/api/user`, {
+        const userResponse = await fetchWithTimeout(`${API_URL}/api/user`, {
           headers: {
             "Authorization": `Bearer ${token}`,
           },
         });
 
         if (!userResponse.ok) {
-          throw new Error(`Failed to sync user: ${userResponse.status}`);
+          throw new Error(await getResponseError(userResponse, "Failed to sync user"));
         }
 
         const response = await userResponse.json();
@@ -147,7 +180,7 @@ export default function Dashboard() {
         setInternationalTarget(userData.region_targets?.international || 0);
 
         // Get accounts
-        const accountsResponse = await fetch(`${API_URL}/api/accounts`, {
+        const accountsResponse = await fetchWithTimeout(`${API_URL}/api/accounts`, {
           headers: {
             "Authorization": `Bearer ${token}`,
           },
@@ -168,7 +201,7 @@ export default function Dashboard() {
               continue;
             }
 
-            const positionsResponse = await fetch(`${API_URL}/api/accounts/${account.id}/positions`, {
+            const positionsResponse = await fetchWithTimeout(`${API_URL}/api/accounts/${account.id}/positions`, {
               headers: {
                 "Authorization": `Bearer ${token}`,
               },
@@ -193,7 +226,7 @@ export default function Dashboard() {
         }
 
         // Get last analysis date from jobs endpoint
-        const jobsResponse = await fetch(`${API_URL}/api/jobs`, {
+        const jobsResponse = await fetchWithTimeout(`${API_URL}/api/jobs`, {
           headers: {
             "Authorization": `Bearer ${token}`,
           },
@@ -211,7 +244,7 @@ export default function Dashboard() {
 
       } catch (err) {
         console.error("Error loading data:", err);
-        setError(err instanceof Error ? err.message : "Failed to load data");
+        setError(getLoadErrorMessage(err));
       } finally {
         setLoading(false);
       }
@@ -232,7 +265,7 @@ export default function Dashboard() {
         console.log('Analysis completed - refreshing dashboard data...');
 
         // Refresh accounts to get latest prices
-        const accountsResponse = await fetch(`${API_URL}/api/accounts`, {
+        const accountsResponse = await fetchWithTimeout(`${API_URL}/api/accounts`, {
           headers: {
             "Authorization": `Bearer ${token}`,
           },
@@ -247,7 +280,7 @@ export default function Dashboard() {
           const instrumentsData: Record<string, Instrument> = {};
 
           for (const account of accountsData.accounts || []) {
-            const positionsResponse = await fetch(
+            const positionsResponse = await fetchWithTimeout(
               `${API_URL}/api/accounts/${account.id}/positions`,
               {
                 headers: {
@@ -341,7 +374,7 @@ export default function Dashboard() {
         }
       };
 
-      const response = await fetch(`${API_URL}/api/user`, {
+      const response = await fetchWithTimeout(`${API_URL}/api/user`, {
         method: "PUT",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -389,6 +422,12 @@ export default function Dashboard() {
       <Layout>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <h1 className="text-3xl font-bold text-dark mb-8">Dashboard</h1>
+
+        {error && !loading ? (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+            <p className="text-red-700">{error}</p>
+          </div>
+        ) : null}
 
         {loading ? (
           // Loading skeleton
@@ -461,18 +500,6 @@ export default function Dashboard() {
         {/* User Settings Section */}
         <div className="bg-white rounded-lg shadow p-6 mb-8">
           <h2 className="text-xl font-semibold text-dark mb-6">User Settings</h2>
-
-          {loading ? (
-            <p className="text-gray-500">Loading...</p>
-          ) : error && !error.includes("success") ? (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-              <p className="text-red-600">{error}</p>
-            </div>
-          ) : error && error.includes("success") ? (
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
-              <p className="text-green-600">✅ {error}</p>
-            </div>
-          ) : null}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Basic Info */}
