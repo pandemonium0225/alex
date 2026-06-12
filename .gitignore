@@ -222,6 +222,7 @@ terraform.tfstate.d/
 *.tfstate
 *.tfstate.backup
 *.tfstate.*.backup
+/backend/output.json
 
 # Lambda deployment packages
 lambda_function.zip
