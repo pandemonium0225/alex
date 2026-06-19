@@ -26,6 +26,28 @@ RETIREMENT_FUNCTION = os.getenv("RETIREMENT_FUNCTION", "alex-retirement")
 MOCK_LAMBDAS = os.getenv("MOCK_LAMBDAS", "false").lower() == "true"
 
 
+def log_agent_invocation_event(
+    event: str,
+    agent_name: str,
+    function_name: str,
+    payload: Dict[str, Any],
+    details: Dict[str, Any] | None = None,
+) -> None:
+    """Log cross-Lambda agent calls in a CloudWatch-queryable shape."""
+    logger.info(
+        json.dumps(
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "event": event,
+                "agent": agent_name,
+                "function_name": function_name,
+                "job_id": payload.get("job_id"),
+                "details": details or {},
+            }
+        )
+    )
+
+
 @dataclass
 class PlannerContext:
     """Context for planner agent tools."""
@@ -36,14 +58,29 @@ async def invoke_lambda_agent(
     agent_name: str, function_name: str, payload: Dict[str, Any]
 ) -> Dict[str, Any]:
     """Invoke a Lambda function for an agent."""
+    start_time = datetime.utcnow()
 
     # For local testing with mocked agents
     if MOCK_LAMBDAS:
         logger.info(f"[MOCK] Would invoke {agent_name} with payload: {json.dumps(payload)[:200]}")
+        log_agent_invocation_event(
+            "AGENT_INVOKED",
+            agent_name,
+            function_name,
+            payload,
+            {"mock": True},
+        )
         return {"success": True, "message": f"[Mock] {agent_name} completed", "mock": True}
 
     try:
         logger.info(f"Invoking {agent_name} Lambda: {function_name}")
+        log_agent_invocation_event(
+            "AGENT_INVOKED",
+            agent_name,
+            function_name,
+            payload,
+            {"mock": False, "payload_keys": sorted(payload.keys())},
+        )
 
         response = lambda_client.invoke(
             FunctionName=function_name,
@@ -51,6 +88,7 @@ async def invoke_lambda_agent(
             Payload=json.dumps(payload),
         )
 
+        status_code = response.get("StatusCode")
         result = json.loads(response["Payload"].read())
 
         # Unwrap Lambda response if it has the standard format
@@ -64,9 +102,30 @@ async def invoke_lambda_agent(
                 result = result["body"]
 
         logger.info(f"{agent_name} completed successfully")
+        log_agent_invocation_event(
+            "AGENT_COMPLETED",
+            agent_name,
+            function_name,
+            payload,
+            {
+                "duration_seconds": (datetime.utcnow() - start_time).total_seconds(),
+                "lambda_status_code": status_code,
+                "result_keys": sorted(result.keys()) if isinstance(result, dict) else [],
+            },
+        )
         return result
 
     except Exception as e:
+        log_agent_invocation_event(
+            "AGENT_FAILED",
+            agent_name,
+            function_name,
+            payload,
+            {
+                "duration_seconds": (datetime.utcnow() - start_time).total_seconds(),
+                "error": str(e),
+            },
+        )
         logger.error(f"Error invoking {agent_name}: {e}")
         return {"error": str(e)}
 

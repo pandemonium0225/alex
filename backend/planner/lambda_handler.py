@@ -7,6 +7,7 @@ import json
 import asyncio
 import logging
 from typing import Dict, Any
+from datetime import datetime, timezone
 
 from agents import Agent, Runner, trace
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -32,6 +33,26 @@ logger.setLevel(logging.INFO)
 # Initialize database
 db = Database()
 
+
+def log_planner_event(
+    event: str,
+    job_id: str,
+    user_id: str | None = None,
+    details: Dict[str, Any] | None = None,
+) -> None:
+    """Write planner lifecycle events as JSON for CloudWatch queries."""
+    logger.info(
+        json.dumps(
+            {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": event,
+                "job_id": job_id,
+                "user_id": user_id,
+                "details": details or {},
+            }
+        )
+    )
+
 @retry(
     retry=retry_if_exception_type(RateLimitError),
     stop=stop_after_attempt(5),
@@ -40,23 +61,50 @@ db = Database()
 )
 async def run_orchestrator(job_id: str) -> None:
     """Run the orchestrator agent to coordinate portfolio analysis."""
+    start_time = datetime.now(timezone.utc)
+    user_id = None
+
     try:
+        job = db.jobs.find_by_id(job_id)
+        if not job:
+            log_planner_event("PLANNER_JOB_NOT_FOUND", job_id)
+            logger.error(f"Planner: Job {job_id} not found.")
+            return
+
+        user_id = job["clerk_user_id"]
+        log_planner_event("PLANNER_STARTED", job_id, user_id)
+
         # Update job status to running
         db.jobs.update_status(job_id, 'running')
-        
+
         # Handle missing instruments first (non-agent pre-processing)
+        log_planner_event("PLANNER_STAGE_STARTED", job_id, user_id, {"stage": "instrument_check"})
         await asyncio.to_thread(handle_missing_instruments, job_id, db)
+        log_planner_event("PLANNER_STAGE_COMPLETED", job_id, user_id, {"stage": "instrument_check"})
 
         # Update instrument prices after tagging
         logger.info("Planner: Updating instrument prices from market data")
+        log_planner_event("PLANNER_STAGE_STARTED", job_id, user_id, {"stage": "price_refresh"})
         await asyncio.to_thread(update_instrument_prices, job_id, db)
+        log_planner_event("PLANNER_STAGE_COMPLETED", job_id, user_id, {"stage": "price_refresh"})
 
         # Load portfolio summary (just statistics, not full data)
+        log_planner_event("PLANNER_STAGE_STARTED", job_id, user_id, {"stage": "portfolio_summary"})
         portfolio_summary = await asyncio.to_thread(load_portfolio_summary, job_id, db)
-        
+        log_planner_event(
+            "PLANNER_PORTFOLIO_SUMMARY_READY",
+            job_id,
+            user_id,
+            {
+                "num_accounts": portfolio_summary.get("num_accounts"),
+                "num_positions": portfolio_summary.get("num_positions"),
+                "total_value": portfolio_summary.get("total_value"),
+            },
+        )
+
         # Create agent with tools and context
         model, tools, task, context = create_agent(job_id, portfolio_summary, db)
-        
+
         # Run the orchestrator
         with trace("Planner Orchestrator"):
             from agent import PlannerContext
@@ -66,19 +114,58 @@ async def run_orchestrator(job_id: str) -> None:
                 model=model,
                 tools=tools
             )
-            
+
+            log_planner_event(
+                "PLANNER_AGENT_RUN_STARTED",
+                job_id,
+                user_id,
+                {
+                    "max_turns": 20,
+                    "tools": [
+                        getattr(tool, "name", getattr(tool, "__name__", str(tool)))
+                        for tool in tools
+                    ],
+                },
+            )
             result = await Runner.run(
                 agent,
                 input=task,
                 context=context,
                 max_turns=20
             )
-            
+            log_planner_event(
+                "PLANNER_AGENT_RUN_COMPLETED",
+                job_id,
+                user_id,
+                {"final_output_length": len(str(result.final_output))},
+            )
+
             # Mark job as completed after all agents finish
             db.jobs.update_status(job_id, "completed")
             logger.info(f"Planner: Job {job_id} completed successfully")
+            end_time = datetime.now(timezone.utc)
+            log_planner_event(
+                "PLANNER_COMPLETED",
+                job_id,
+                user_id,
+                {
+                    "duration_seconds": (end_time - start_time).total_seconds(),
+                    "status": "success",
+                },
+            )
             
     except Exception as e:
+        end_time = datetime.now(timezone.utc)
+        log_planner_event(
+            "PLANNER_FAILED",
+            job_id,
+            user_id,
+            {
+                "duration_seconds": (end_time - start_time).total_seconds(),
+                "status": "failed",
+                "error": str(e),
+            },
+        )
         logger.error(f"Planner: Error in orchestration: {e}", exc_info=True)
         db.jobs.update_status(job_id, 'failed', error_message=str(e))
         raise

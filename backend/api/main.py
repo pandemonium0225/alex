@@ -7,7 +7,7 @@ import os
 import json
 import logging
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 import uuid
 
@@ -36,6 +36,21 @@ load_dotenv(override=True)
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+class StructuredLogger:
+    """Write JSON logs that are easy to query in CloudWatch Logs Insights."""
+
+    @staticmethod
+    def log_event(event_type: str, user_id: str | None = None, details: dict | None = None) -> None:
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_type": event_type,
+            "user_id": user_id,
+            "details": details or {},
+        }
+        logger.info(json.dumps(log_entry))
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -511,6 +526,16 @@ async def trigger_analysis(request: AnalyzeRequest, clerk_user_id: str = Depends
     """Trigger portfolio analysis"""
 
     try:
+        StructuredLogger.log_event(
+            "ANALYSIS_TRIGGERED",
+            user_id=clerk_user_id,
+            details={
+                "analysis_type": request.analysis_type,
+                "option_keys": sorted(request.options.keys()),
+                "sqs_configured": bool(SQS_QUEUE_URL),
+            },
+        )
+
         # Get user
         user = db.users.find_by_clerk_id(clerk_user_id)
 
@@ -522,6 +547,15 @@ async def trigger_analysis(request: AnalyzeRequest, clerk_user_id: str = Depends
             clerk_user_id=clerk_user_id,
             job_type="portfolio_analysis",
             request_payload=request.model_dump()
+        )
+
+        StructuredLogger.log_event(
+            "ANALYSIS_JOB_CREATED",
+            user_id=clerk_user_id,
+            details={
+                "job_id": str(job_id),
+                "analysis_type": request.analysis_type,
+            },
         )
 
         # Get the created job
@@ -541,8 +575,24 @@ async def trigger_analysis(request: AnalyzeRequest, clerk_user_id: str = Depends
                 MessageBody=json.dumps(message)
             )
             logger.info(f"Sent analysis job to SQS: {job_id}")
+            StructuredLogger.log_event(
+                "ANALYSIS_QUEUED",
+                user_id=clerk_user_id,
+                details={
+                    "job_id": str(job_id),
+                    "analysis_type": request.analysis_type,
+                },
+            )
         else:
             logger.warning("SQS_QUEUE_URL not configured, job created but not queued")
+            StructuredLogger.log_event(
+                "ANALYSIS_NOT_QUEUED",
+                user_id=clerk_user_id,
+                details={
+                    "job_id": str(job_id),
+                    "reason": "SQS_QUEUE_URL not configured",
+                },
+            )
 
         return AnalyzeResponse(
             job_id=str(job_id),
@@ -550,6 +600,14 @@ async def trigger_analysis(request: AnalyzeRequest, clerk_user_id: str = Depends
         )
 
     except Exception as e:
+        StructuredLogger.log_event(
+            "ANALYSIS_TRIGGER_FAILED",
+            user_id=clerk_user_id,
+            details={
+                "analysis_type": request.analysis_type,
+                "error": str(e),
+            },
+        )
         logger.error(f"Error triggering analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

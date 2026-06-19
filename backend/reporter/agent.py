@@ -7,11 +7,30 @@ import json
 import logging
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+from datetime import datetime
 
 from agents import function_tool, RunContextWrapper
 from agents.extensions.models.litellm_model import LitellmModel
 
 logger = logging.getLogger()
+
+
+def log_reporter_event(
+    event: str,
+    job_id: str,
+    details: Dict[str, Any] | None = None,
+) -> None:
+    """Log reporter events as JSON without storing full report or research text."""
+    logger.info(
+        json.dumps(
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "event": event,
+                "job_id": job_id,
+                "details": details or {},
+            }
+        )
+    )
 
 
 @dataclass
@@ -128,6 +147,9 @@ async def get_market_insights(
     try:
         import boto3
 
+        job_id = wrapper.context.job_id
+        visible_symbols = symbols[:5] if symbols else []
+
         # Get account ID
         sts = boto3.client("sts")
         account_id = sts.get_caller_identity()["Account"]
@@ -138,6 +160,18 @@ async def get_market_insights(
         sagemaker = boto3.client("sagemaker-runtime", region_name=sagemaker_region)
         endpoint_name = os.getenv("SAGEMAKER_ENDPOINT", "alex-embedding-endpoint")
         query = f"market analysis {' '.join(symbols[:5])}" if symbols else "market outlook"
+        log_reporter_event(
+            "MARKET_INSIGHTS_LOOKUP_STARTED",
+            job_id,
+            {
+                "symbol_count": len(symbols),
+                "symbols_sample": visible_symbols,
+                "sagemaker_endpoint": endpoint_name,
+                "region": sagemaker_region,
+                "vector_bucket": bucket,
+                "query": query,
+            },
+        )
 
         response = sagemaker.invoke_endpoint(
             EndpointName=endpoint_name,
@@ -151,6 +185,14 @@ async def get_market_insights(
             embedding = result[0][0] if isinstance(result[0], list) else result[0]
         else:
             embedding = result
+        log_reporter_event(
+            "MARKET_INSIGHTS_EMBEDDING_CREATED",
+            job_id,
+            {
+                "embedding_dimensions": len(embedding) if hasattr(embedding, "__len__") else None,
+                "sagemaker_endpoint": endpoint_name,
+            },
+        )
 
         # Search vectors
         s3v = boto3.client("s3vectors", region_name=sagemaker_region)
@@ -171,13 +213,32 @@ async def get_market_insights(
                 company = metadata.get("company_name", "")
                 prefix = f"{company}: " if company else "- "
                 insights.append(f"{prefix}{text}...")
+        log_reporter_event(
+            "MARKET_INSIGHTS_LOOKUP_COMPLETED",
+            job_id,
+            {
+                "results_returned": len(response.get("vectors", [])),
+                "insights_used": len(insights),
+            },
+        )
 
         if insights:
             return "Market Insights:\n" + "\n".join(insights)
         else:
+            log_reporter_event(
+                "MARKET_INSIGHTS_EMPTY",
+                job_id,
+                {"reason": "No vectors contained usable text metadata"},
+            )
             return "Market insights unavailable - proceeding with standard analysis."
 
     except Exception as e:
+        job_id = getattr(getattr(wrapper, "context", None), "job_id", "unknown")
+        log_reporter_event(
+            "MARKET_INSIGHTS_LOOKUP_FAILED",
+            job_id,
+            {"error": str(e)},
+        )
         logger.warning(f"Reporter: Could not retrieve market insights: {e}")
         return "Market insights unavailable - proceeding with standard analysis."
 
