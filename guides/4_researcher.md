@@ -20,10 +20,10 @@ After answering questions, say exactly which guide you're on and any issues. Be 
 
 ## What You'll Deploy
 
-<span style="color:red">IMPORTANT: MAJOR CHANGE:</span> The researcher deployment now uses AWS Lambda with a public Function URL instead of App Runner. This PR keeps the existing guide intact and adds only this clarification. See `terraform/4_researcher/main.tf`, `backend/researcher/deploy.py`, `backend/researcher/Dockerfile`, `backend/researcher/mcp_servers.py`, and `backend/researcher/server.py` for the focused implementation changes.
+<span style="color:red">IMPORTANT: MAJOR CHANGE:</span> The researcher deployment now uses **AWS Lambda with a public Function URL** instead of App Runner. This guide has been updated to reflect that. See `terraform/4_researcher/main.tf`, `backend/researcher/deploy.py`, `backend/researcher/Dockerfile`, `backend/researcher/mcp_servers.py`, and `backend/researcher/server.py` for the implementation.
 
 
-The Researcher service is an AWS App Runner application that:
+The Researcher service is an AWS Lambda function (deployed as a container image and exposed through a public Function URL) that:
 - Uses the OpenAI Agents SDK for agent orchestration and tracing
 - Uses AWS Bedrock with OpenAI's OSS 120B model for AI capabilities
 - Employs a Playwright MCP (Model Context Protocol) server for web browsing and data retrieval
@@ -34,7 +34,7 @@ Here's how it fits into the Alex architecture:
 
 ```mermaid
 graph LR
-    User[User] -->|Research Request| AR[App Runner<br/>Researcher]
+    User[User] -->|Research Request| AR[Lambda<br/>Researcher<br/>Function URL]
     Schedule[EventBridge<br/>Every 2hrs] -->|Trigger| SchedLambda[Lambda<br/>Scheduler]
     SchedLambda -->|Auto Research| AR
     AR -->|Generate Analysis| Bedrock[AWS Bedrock<br/>OSS 120B<br/>us-west-2]
@@ -72,43 +72,38 @@ The Researcher uses AWS Bedrock with OpenAI's open-source OSS 120B model. You ne
 
 **Important Notes:**
 - ⚠️ The OSS models are ONLY available in **us-west-2** region
-- ✅ Your App Runner service can be in any region (e.g., us-east-1) and will connect cross-region to us-west-2
+- ✅ Your researcher Lambda can be in any region (e.g., us-east-1) and will connect cross-region to us-west-2
 - The OSS models are open-weight models from OpenAI, not the commercial GPT models
 - No API key is required for Bedrock - AWS IAM handles authentication
 - The researcher requires an OpenAI API key for the OpenAI Agents SDK's tracing functionality (to monitor and debug agent execution)
 
-## Extra part of Step 0: IMPORTANT - ADDED SINCE THE VIDEOS!!
+## Extra part of Step 0: IMPORTANT - choosing your model and region
 
-### Update server.py with your model
+With many thanks to Students Marcin B. and Yuelin L. for surfacing this.
 
-With many thanks to Student Marcin B. for this crucial extra step.
+> **NOTE — this changed since the videos.** The researcher used to have the region and model **hard-coded** in `backend/researcher/server.py`. It no longer does. `server.py` now reads them from environment variables (`BEDROCK_REGION` and `RESEARCHER_MODEL`), which Terraform injects into the Lambda from your `terraform.tfvars`. **You no longer edit `server.py` to change the model** — you set it in `terraform/4_researcher/terraform.tfvars` instead (see Step 1).
 
-In future labs, we will make this more configurable. But for this step, the Researcher Agent has some variables hard-coded which you will need to change.
+The two variables are:
 
-Please look at the file `backend/researcher/server.py`
+- `bedrock_region` — the region used for Bedrock inference (default `us-west-2`, where the OpenAI OSS models live). LiteLLM needs the region, and `server.py` sets `AWS_REGION_NAME` from this value for you.
+- `researcher_model` — the LiteLLM model identifier, **including the `bedrock/` prefix** (default `bedrock/global.openai.gpt-oss-120b-1:0`).
 
-You should see this section:
+Common choices for `researcher_model`:
 
-```python
-    # Please override these variables with the region you are using
-    # Other choices: us-west-2 (for OpenAI OSS models) and eu-central-1
-    REGION = "us-east-1"
-    os.environ["AWS_REGION_NAME"] = REGION  # LiteLLM's preferred variable
-    os.environ["AWS_REGION"] = REGION  # Boto3 standard
-    os.environ["AWS_DEFAULT_REGION"] = REGION  # Fallback
+```hcl
+# OpenAI OSS (default, us-west-2 only)
+researcher_model = "bedrock/global.openai.gpt-oss-120b-1:0"
 
-    # Please override this variable with the model you are using
-    # Common choices: bedrock/eu.amazon.nova-pro-v1:0 for EU and bedrock/us.amazon.nova-pro-v1:0 for US
-    # or bedrock/amazon.nova-pro-v1:0 if you are not using inference profiles
-    # bedrock/openai.gpt-oss-120b-1:0 for OpenAI OSS models
-    # bedrock/converse/us.anthropic.claude-sonnet-4-20250514-v1:0 for Claude Sonnet 4
-    # NOTE that nova-pro is needed to support tools and MCP servers; nova-lite is not enough - thank you Yuelin L.!
-    MODEL = "bedrock/us.amazon.nova-pro-v1:0"
-    model = LitellmModel(model=MODEL)
+# Amazon Nova Pro (inference profiles)
+researcher_model = "bedrock/us.amazon.nova-pro-v1:0"   # US
+researcher_model = "bedrock/eu.amazon.nova-pro-v1:0"   # EU
+researcher_model = "bedrock/amazon.nova-pro-v1:0"      # no inference profile
+
+# Claude Sonnet 4
+researcher_model = "bedrock/converse/us.anthropic.claude-sonnet-4-20250514-v1:0"
 ```
 
-Please update the value of REGION and MODEL to reflect the model you have access to. See the examples given for possible values.  
-Note that nova-lite is not an acceptable choice as it doesn't support tool calling / MCP. Thank you Yuelin L!
+⚠️ The model **must support tool calling / MCP** (the researcher uses a Playwright MCP server). Nova **Pro** works; Nova **Lite** does **not**. Make sure you have requested access to whichever model you choose in the matching region (see Step 0 above).
 
 ## Step 1: Deploy the Infrastructure
 
@@ -134,45 +129,30 @@ cp terraform.tfvars.example terraform.tfvars
 
 Edit `terraform.tfvars` and update with your values from the `.env` file:
 ```hcl
-aws_region = "us-east-1"  # Your AWS region
+aws_region = "us-east-1"  # Your AWS region (where the Lambda runs)
 openai_api_key = "sk-..."  # Your OpenAI API key
 alex_api_endpoint = "https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/prod/ingest"  # From Part 3
 alex_api_key = "your-api-key-here"  # From Part 3
 scheduler_enabled = false  # Keep false for now
+
+# Model selection (both optional - these are the defaults).
+# See "Extra part of Step 0" above for the full list of choices.
+bedrock_region   = "us-west-2"                               # region for Bedrock inference
+researcher_model = "bedrock/global.openai.gpt-oss-120b-1:0"  # remember the bedrock/ prefix
 ```
 
-Deploy the ECR repository and IAM roles first.
-
-Mac/Linux:
+Then initialize Terraform:
 
 ```bash
 # Initialize Terraform (creates local state file)
 terraform init
-
-# Deploy only the ECR repository and IAM roles (not App Runner yet)
-terraform apply -target=aws_ecr_repository.researcher -target=aws_iam_role.app_runner_role
 ```
 
-PC:
-
-```powershell
-# Initialize Terraform (creates local state file)
-terraform init
-
-# Deploy only the ECR repository and IAM roles (not App Runner yet)
-terraform apply -target="aws_ecr_repository.researcher" -target="aws_iam_role.app_runner_role"
-```
-
-
-Type `yes` when prompted. This creates:
-- ECR repository for your Docker images
-- IAM roles with proper permissions for App Runner
-
-Save the ECR repository URL shown in the output - you'll need it in Step 2.
+You don't need to run any `terraform apply` by hand here. The deploy script in Step 2 creates the ECR repository, builds and pushes the image, and then applies the full Terraform configuration (the Lambda function and its Function URL) for you.
 
 ## Step 2: Build and Deploy the Researcher
 
-Now we'll build the Docker container and deploy it to App Runner.
+Now we'll build the Docker container and deploy it as a Lambda function. The deploy script does the whole thing in one command — there is no separate "create the service" step anymore.
 
 ```bash
 # Navigate to the backend/researcher directory
@@ -180,42 +160,31 @@ uv run deploy.py
 ```
 
 This script will:
-1. Build a Docker image (with `--platform linux/amd64` for compatibility)
-2. Push it to your ECR repository
-3. Trigger an App Runner deployment
-4. Wait for the deployment to complete (3-5 minutes)
-5. Display your service URL when ready
+1. Apply the Terraform ECR prerequisites (the ECR repository and its access policy)
+2. Build a Docker image (with `--platform linux/amd64` for compatibility)
+3. Push it to your ECR repository
+4. Apply the full Terraform configuration, creating/updating the `alex-researcher` Lambda and its public Function URL (the script writes the image URI into `researcher.auto.tfvars.json` for you)
+5. Wait for the Lambda to become `Active`
+6. Display your Function URL when ready
 
 **Important Note for Apple Silicon Mac Users:**
-The deployment script automatically builds for `linux/amd64` architecture to ensure compatibility with AWS App Runner. This is why you'll see "Building Docker image for linux/amd64..." in the output.
+The deployment script automatically builds for `linux/amd64` architecture to ensure compatibility with AWS Lambda (which runs x86_64 containers here). This is why you'll see "Building Docker image for linux/amd64..." in the output.
 
-When the Docker image push completes, you'll see:
+When the deployment completes, you'll see:
 ```
 ✅ Docker image pushed successfully!
+...
+🚀 Your service is available at:
+   https://<random-id>.lambda-url.<region>.on.aws/
 ```
 
-## Step 3: Create the App Runner Service
+That Function URL is the researcher's public HTTPS endpoint. To change the model later, edit `researcher_model` in `terraform.tfvars` and re-run `uv run deploy.py` (or `terraform apply`).
 
-Now that your Docker image is in ECR, create the App Runner service:
-
-```bash
-# Navigate back to the terraform/4_researcher directory
-# Deploy the complete infrastructure including App Runner
-terraform apply
-```
-
-Type `yes` when prompted. This will:
-- Create the App Runner service using your Docker image
-- Configure environment variables for the service
-- Set up the optional EventBridge scheduler (if enabled)
-
-The App Runner service creation takes 3-5 minutes. When complete, you'll see the service URL in the output.
-
-## Step 4: Test the Complete System
+## Step 3: Test the Complete System
 
 Now let's test the full pipeline: Research → Ingest → Search.
 
-### 4.1: First, Clean the Database
+### 3.1: First, Clean the Database
 
 Clear any existing test data:
 
@@ -226,7 +195,7 @@ uv run cleanup_s3vectors.py
 
 You should see: "✅ All documents deleted successfully"
 
-### 4.2: Generate Research
+### 3.2: Generate Research
 
 Now let's generate some investment research:
 
@@ -236,7 +205,7 @@ uv run test_research.py
 ```
 
 This script will:
-1. Find your App Runner service URL automatically
+1. Find your researcher Function URL automatically
 2. Check that the service is healthy
 3. Generate research on a trending topic (default)
 4. Display the results
@@ -250,7 +219,7 @@ uv run test_research.py "Microsoft cloud revenue growth"
 
 The research takes 20-30 seconds as the agent browses financial websites and generates investment insights.
 
-### 4.3: Verify Data Storage
+### 3.3: Verify Data Storage
 
 Check that the research was stored:
 
@@ -264,7 +233,7 @@ You should see your research in the database with:
 - Embeddings generated by SageMaker
 - Metadata including timestamp and topic
 
-### 4.4: Test Semantic Search
+### 3.4: Test Semantic Search
 
 Now test that semantic search works:
 
@@ -274,7 +243,7 @@ uv run test_search_s3vectors.py "electric vehicle market"
 
 Even if you search for something different than what was stored, semantic search will find related content.
 
-## Step 5: Test the Researcher
+## Step 4: Test the Researcher
 
 Now that your service is deployed and tested, let's explore its capabilities.
 
@@ -321,7 +290,7 @@ You should see:
 3. **Build Your Knowledge Base:**
    Try different investment topics and build a comprehensive knowledge base for portfolio management.
 
-## Step 6: Enable Automated Research (Optional)
+## Step 5: Enable Automated Research (Optional)
 
 Now let's enable automated research that runs every 2 hours to continuously gather the latest financial insights and build your knowledge base.
 
@@ -356,7 +325,7 @@ Type `yes` when prompted. You'll see:
 - New resources being created (Lambda function and EventBridge schedule)
 - Output showing `scheduler_status = "ENABLED - Running every 2 hours"`
 
-**Note:** The scheduler uses a small Lambda function to call your App Runner endpoint. This is necessary because App Runner endpoints can take 30-60 seconds to complete research, but EventBridge API Destinations have a 5-second timeout limit.
+**Note:** The scheduler uses a small Lambda function to call your researcher Function URL. This is necessary because the research call can take 30-60 seconds to complete, but EventBridge API Destinations have a 5-second timeout limit.
 
 ### Verify Scheduler Status
 
@@ -375,9 +344,9 @@ The scheduler will call your `/research/auto` endpoint every 2 hours. You can:
 aws logs tail /aws/lambda/alex-research-scheduler --follow --region us-east-1
 ```
 
-2. Check App Runner logs to see the actual research being performed:
+2. Check the researcher Lambda logs to see the actual research being performed:
 ```bash
-aws logs tail /aws/apprunner/alex-researcher/*/application --follow --region us-east-1
+aws logs tail /aws/lambda/alex-researcher --follow --region us-east-1
 ```
 
 3. Search your S3 Vectors database to see the accumulated research:
@@ -411,23 +380,24 @@ This will remove the scheduler but keep all your other services running.
 - Ensure Docker is running
 - Verify your AWS credentials are configured
 
-### "Deployment stuck in OPERATION_IN_PROGRESS"
-- This is normal for the first deployment (can take 5-10 minutes)
-- Check CloudWatch logs in AWS Console > App Runner > Your service > Logs
+### Lambda update taking a long time / "LastUpdateStatus: InProgress"
+- This is normal for the first deployment after pushing a new image
+- The deploy script polls until the function reaches `Active` / `Successful`
+- Check CloudWatch logs in AWS Console > Lambda > alex-researcher > Monitor > View CloudWatch logs (or `aws logs tail /aws/lambda/alex-researcher --follow`)
 
-### "Exit code 255" or service won't start
+### "Exit code 255" / the function errors on the first invocation (cold start)
 - This usually means the Docker image wasn't built for the right architecture
-- Ensure the deploy script uses `--platform linux/amd64`
-- Rebuild and redeploy
+- Ensure the deploy script uses `--platform linux/amd64` (the Lambda is configured for x86_64)
+- Rebuild and redeploy with `uv run deploy.py`
 
-### "Connection refused" when calling the service
-- Ensure the service status is "RUNNING"
-- Check that you're using HTTPS (not HTTP)
-- Verify the service URL is correct
+### "Connection refused" / 403 when calling the Function URL
+- Make sure the Lambda finished deploying (deploy script prints `✅ Lambda is active.`)
+- Check that you're using HTTPS (not HTTP) and the full Function URL ending in `.on.aws/`
+- Confirm the Function URL exists: `aws lambda get-function-url-config --function-name alex-researcher`
 
-### "504 Gateway Timeout" errors
-- The agent may be taking too long (>30 seconds)
-- This is normal if the agent is browsing multiple web pages
+### Timeout errors
+- The agent may be taking too long; the Lambda timeout is 300 seconds
+- It's normal for a research call to take 20-60 seconds while the agent browses web pages
 - The research should still complete and be stored
 
 ### "Invalid model identifier" or Bedrock errors
@@ -481,7 +451,7 @@ OPENAI_API_KEY=sk-...
 ## What's Next?
 
 Congratulations! You now have a complete AI research pipeline:
-1. **Researcher Agent** (App Runner) - Generates investment analysis using Bedrock OSS models in us-west-2
+1. **Researcher Agent** (Lambda + Function URL) - Generates investment analysis using Bedrock models in us-west-2
 2. **Ingest Pipeline** (Lambda) - Processes and stores documents
 3. **Vector Database** (S3 Vectors) - Cost-effective semantic search
 4. **Embedding Model** (SageMaker) - Creates semantic representations

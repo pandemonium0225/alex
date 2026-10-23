@@ -26,7 +26,7 @@ Here's what you'll be building across all the guides:
 
 ```mermaid
 graph TB
-    User[User] -->|Research| AR[App Runner<br/>AI Researcher]
+    User[User] -->|Research| AR[Lambda<br/>AI Researcher<br/>Function URL]
     Schedule[EventBridge<br/>Every 2 Hours] -->|Trigger| SchedLambda[Lambda<br/>Scheduler]
     SchedLambda -->|Call| AR
     AR -->|Generate| Bedrock[AWS Bedrock<br/>OSS 120B Model]
