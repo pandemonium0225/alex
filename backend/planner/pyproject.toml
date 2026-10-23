@@ -14,5 +14,10 @@ dependencies = [
     "tenacity>=9.1.2",
 ]
 
+[tool.uv]
+# polygon-api-client pins certifi<2026; override to a bundle without the
+# compromised emSign roots (GHSA-6q48-6c7w-9gw2).
+override-dependencies = ["certifi>=2026.10.19"]
+
 [tool.uv.sources]
 alex-database = { path = "../database", editable = true }
