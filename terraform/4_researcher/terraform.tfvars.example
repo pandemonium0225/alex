@@ -1,7 +1,8 @@
 # Part 4: Researcher Agent Configuration
 # Copy this file to terraform.tfvars and update with your values
 
-# Your AWS region for App Runner (can be any region with App Runner support)
+# Your AWS region for the researcher Lambda (can be any region; Bedrock is called
+# cross-region via bedrock_region below)
 aws_region = "us-east-1"
 
 # Your OpenAI API key (get from https://platform.openai.com/api-keys)
@@ -15,3 +16,14 @@ alex_api_key = "your-api-key-here"
 
 # Enable automated research scheduler (optional, default is false)
 scheduler_enabled = false
+
+# Model selection (optional - these are the defaults).
+# bedrock_region: region used for Bedrock inference (OpenAI OSS models live in us-west-2)
+bedrock_region = "us-west-2"
+# researcher_model: LiteLLM model id, INCLUDING the bedrock/ prefix.
+# Must support tool calling / MCP (Nova Pro works, Nova Lite does not).
+# Examples:
+#   bedrock/global.openai.gpt-oss-120b-1:0   (OpenAI OSS, us-west-2 only)
+#   bedrock/us.amazon.nova-pro-v1:0          (Nova Pro, US inference profile)
+#   bedrock/eu.amazon.nova-pro-v1:0          (Nova Pro, EU inference profile)
+researcher_model = "bedrock/global.openai.gpt-oss-120b-1:0"

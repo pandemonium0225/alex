@@ -11,7 +11,7 @@ graph TB
     
     %% Backend Services
     Lambda[fa:fa-bolt Lambda<br/>alex-ingest<br/>Document Processing]
-    AppRunner[fa:fa-server App Runner<br/>alex-researcher<br/>AI Agent Service]
+    Researcher[fa:fa-bolt Lambda<br/>alex-researcher<br/>AI Agent Service<br/>Function URL]
     
     %% Scheduler Components
     EventBridge[fa:fa-clock EventBridge<br/>Scheduler<br/>Every 2 Hours]
@@ -26,17 +26,17 @@ graph TB
     ECR[fa:fa-archive ECR<br/>Docker Registry<br/>Researcher Images]
     
     %% Connections
-    AppRunner -->|Store Research| APIGW
-    AppRunner -->|Generate| Bedrock
+    Researcher -->|Store Research| APIGW
+    Researcher -->|Generate| Bedrock
     APIGW -->|Invoke| Lambda
     
     EventBridge -->|Every 2hrs| SchedulerLambda
-    SchedulerLambda -->|Call /research/auto| AppRunner
+    SchedulerLambda -->|Call /research/auto| Researcher
     
     Lambda -->|Get Embeddings| SageMaker
     Lambda -->|Store Vectors| S3Vectors
     
-    AppRunner -.->|Pull Image| ECR
+    Researcher -.->|Pull Image| ECR
     
     %% Styling
     classDef aws fill:#FF9900,stroke:#232F3E,stroke-width:2px,color:#fff
@@ -45,7 +45,7 @@ graph TB
     classDef highlight fill:#90EE90,stroke:#228B22,stroke-width:3px,color:#000
     classDef scheduler fill:#9333EA,stroke:#6B21A8,stroke-width:2px,color:#fff
     
-    class APIGW,Lambda,AppRunner,SageMaker,ECR,SchedulerLambda aws
+    class APIGW,Lambda,Researcher,SageMaker,ECR,SchedulerLambda aws
     class Bedrock ai
     class S3Vectors storage
     class S3Vectors highlight
@@ -80,11 +80,12 @@ graph TB
   - Memory: 128MB
   - Timeout: 150 seconds
 
-### 4. **App Runner**
-- **Service**: alex-researcher
+### 4. **Lambda (Researcher)**
+- **Function**: alex-researcher (container image)
 - **Purpose**: Hosts the AI research agent
-- **Resources**: 1 vCPU, 2GB RAM
-- **Features**: Auto-scaling, HTTPS endpoint
+- **Resources**: 2GB RAM, 2GB ephemeral storage, 300s timeout
+- **Endpoint**: Public Lambda Function URL (HTTPS), no App Runner service involved
+- **Image**: Pulled from ECR (built/pushed by `backend/researcher/deploy.py`)
 
 ### 5. **SageMaker Serverless**
 - **Model**: sentence-transformers/all-MiniLM-L6-v2
@@ -109,12 +110,12 @@ graph TB
 
 1. **Manual Research Flow**:
    ```
-   User → App Runner → Bedrock (generate) → API Gateway → Lambda → S3 Vectors
+   User → Researcher Lambda (Function URL) → Bedrock (generate) → API Gateway → Lambda → S3 Vectors
    ```
 
 2. **Automated Research Flow**:
    ```
-   EventBridge (every 2hrs) → Lambda Scheduler → App Runner → Bedrock → API Gateway → Lambda → S3 Vectors
+   EventBridge (every 2hrs) → Lambda Scheduler → Researcher Lambda (Function URL) → Bedrock → API Gateway → Lambda → S3 Vectors
    ```
 
 3. **Direct Ingest Flow**:
@@ -133,8 +134,8 @@ graph TB
 |-----------|-------------|-------|
 | S3 Vectors | ~$30 | 90% cheaper than OpenSearch! |
 | SageMaker Serverless | ~$5-10 | Pay per request |
-| Lambda | ~$1 | Minimal invocations |
-| App Runner | ~$5 | 1 vCPU, 2GB RAM |
+| Lambda (ingest + scheduler) | ~$1 | Minimal invocations |
+| Lambda (researcher) | ~$1-3 | Pay per request, 2GB RAM, only billed while running |
 | API Gateway | ~$1 | REST API |
 | **Total** | **~$42-47** | Previously ~$250+ |
 
@@ -143,7 +144,7 @@ graph TB
 - **API Gateway**: API key authentication
 - **IAM Roles**: Least privilege access
 - **S3 Vectors**: Always private (no public access)
-- **App Runner**: HTTPS by default
+- **Lambda Function URL**: HTTPS by default (researcher uses an unauthenticated public URL)
 - **Secrets**: Environment variables for API keys
 
 ## Deployment Architecture
@@ -171,7 +172,7 @@ graph LR
 ## Technology Stack
 
 - **Infrastructure**: Terraform
-- **Compute**: Lambda, App Runner
+- **Compute**: Lambda (ingest, scheduler, and researcher container)
 - **AI/ML**: SageMaker, AWS Bedrock
 - **Storage**: S3 Vectors
 - **API**: API Gateway

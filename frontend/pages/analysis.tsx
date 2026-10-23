@@ -371,7 +371,7 @@ export default function Analysis() {
                         <Cell key={`cell-${idx}`} fill={entry.color || COLORS[idx % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value: number) => `$${value.toLocaleString('en-US')}`} />
+                    <Tooltip formatter={(value) => `$${Number(value ?? 0).toLocaleString('en-US')}`} />
                   </PieChart>
                 ) : chartType === 'horizontalBar' ? (
                   // For horizontal bars, just use regular vertical bars with rotated labels
@@ -391,7 +391,7 @@ export default function Analysis() {
                     <YAxis
                       tickFormatter={(value) => `$${(value/1000).toFixed(0)}k`}
                     />
-                    <Tooltip formatter={(value: number) => `$${value.toLocaleString('en-US')}`} />
+                    <Tooltip formatter={(value) => `$${Number(value ?? 0).toLocaleString('en-US')}`} />
                     <Bar dataKey="value">
                       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                       {chartData.data?.map((entry: any, index: number) => (
@@ -404,7 +404,7 @@ export default function Analysis() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
                     <YAxis tickFormatter={(value) => `$${(value/1000).toFixed(0)}k`} />
-                    <Tooltip formatter={(value: number) => `$${value.toLocaleString('en-US')}`} />
+                    <Tooltip formatter={(value) => `$${Number(value ?? 0).toLocaleString('en-US')}`} />
                     <Bar dataKey="value" fill={chartData.color || COLORS[0]} />
                   </BarChart>
                 ) : (
@@ -413,7 +413,7 @@ export default function Analysis() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey={chartData.xKey || "year"} />
                     <YAxis tickFormatter={(value) => `$${(value/1000).toFixed(0)}k`} />
-                    <Tooltip formatter={(value: number) => `$${value.toLocaleString('en-US')}`} />
+                    <Tooltip formatter={(value) => `$${Number(value ?? 0).toLocaleString('en-US')}`} />
                     <Line type="monotone" dataKey="value" stroke={COLORS[0]} strokeWidth={2} />
                   </LineChart>
                 )}

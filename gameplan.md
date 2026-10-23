@@ -12,7 +12,7 @@ The student has an AWS root user, and also an IAM user called "aiengineer" with 
 
 Students will deploy a complete production AI system featuring:
 - **Multi-agent collaboration**: 5 specialized AI agents working together via orchestration
-- **Serverless architecture**: Lambda, Aurora Serverless v2, App Runner, API Gateway, SQS
+- **Serverless architecture**: Lambda (including the researcher container behind a Function URL), Aurora Serverless v2, API Gateway, SQS
 - **Cost-optimized vector storage**: S3 Vectors (90% cheaper than OpenSearch)
 - **Real-time financial analysis**: Portfolio management, retirement projections, market research
 - **Production-grade practices**: Observability, guardrails, security, monitoring
@@ -57,7 +57,7 @@ alex/
 │   ├── reporter/        # Portfolio analysis agent
 │   ├── charter/         # Visualization agent
 │   ├── retirement/      # Retirement projection agent
-│   ├── researcher/      # Market research agent (App Runner)
+│   ├── researcher/      # Market research agent (Lambda container + Function URL)
 │   ├── ingest/          # Document ingestion Lambda
 │   ├── database/        # Shared database library
 │   └── api/             # FastAPI backend for frontend
@@ -70,7 +70,7 @@ alex/
 ├── terraform/           # Infrastructure as Code (IMPORTANT: Independent directories)
 │   ├── 2_sagemaker/     # SageMaker embedding endpoint
 │   ├── 3_ingestion/     # S3 Vectors and ingest Lambda
-│   ├── 4_researcher/    # App Runner research service
+│   ├── 4_researcher/    # Researcher Lambda (container) + Function URL
 │   ├── 5_database/      # Aurora Serverless v2
 │   ├── 6_agents/        # Multi-agent Lambda functions
 │   ├── 7_frontend/      # CloudFront, S3, API Gateway
@@ -111,7 +111,7 @@ alex/
 
 **Day 5 - Research Agent**
 - **Guide 4: Researcher Agent** (4_researcher.md)
-  - Deploy autonomous research agent on App Runner
+  - Deploy autonomous research agent as a Lambda container exposed via a public Function URL
   - Use AWS Bedrock with Nova Pro model
   - Integrate Playwright MCP server for web browsing
   - Set up EventBridge scheduler (optional)
@@ -473,7 +473,7 @@ The most common issues relate to AWS region choices! Check environment variables
 - API Gateway with API key
 
 **Guide 4**: Research Agent
-- App Runner service (Researcher)
+- Researcher Lambda (container image) with a public Function URL
 - ECR repository
 - EventBridge scheduler (optional)
 

@@ -4,6 +4,7 @@
 // handles EINVAL ("not a symlink"), which is what NTFS returns. Translate
 // the error code so builds behave as they would on NTFS.
 "use strict";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const fs = require("fs");
 
 function einval(p) {
